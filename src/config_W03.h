@@ -1,0 +1,60 @@
+#pragma once
+// LEGACY (pre-2.0): this file used to be copied over config.h to build
+// this board's firmware directly, back when each site was a fully separate
+// compile. As of 2.0, real secrets live in src/secrets.h (gitignored, not
+// committed — see secrets.example.h), and this board's identity (WiFi +
+// location) was seeded into its own on-device flash on first 2.0 boot, so
+// it's no longer touched by shared OTA updates going forward. Real values
+// previously here have been redacted before this repo went public — kept
+// only as a historical record of what this board's settings were.
+
+// WiFi credentials — see local secrets.h (not committed)
+#define WIFI_SSID1 "REDACTED"
+#define WIFI_PASS1 "REDACTED"
+#define WIFI_SSID2 "REDACTED"
+#define WIFI_PASS2 "REDACTED"
+#define WIFI_SSID3 "REDACTED"
+#define WIFI_PASS3 "REDACTED"
+
+// Home location — see local secrets.h (not committed)
+#define HOME_LAT 0.0
+#define HOME_LON 0.0
+
+// ADS-B settings — reduced for CYD (no PSRAM, 320KB DRAM)
+#define ADSB_RADIUS_NM 50
+#define ADSB_POLL_INTERVAL_MS 5000
+#define MAX_AIRCRAFT 80
+#define TRAIL_LENGTH 15
+
+// CYD display
+#define LCD_H_RES 320
+#define LCD_V_RES 240
+
+// CYD touch calibration (landscape rotation 1)
+#define TOUCH_X_MIN 2600
+#define TOUCH_X_MAX 1100
+#define TOUCH_Y_MIN 3950
+#define TOUCH_Y_MAX 280
+
+// Loading Page
+#define VERSION "v2.0"
+#define BUILD_DATE "08/24/2026"
+#define LOCATION_NAME "Wilson Industrial W03"
+
+// Location presets — see local secrets.h (not committed)
+#define LOC1_NAME "Wilson Industrial"
+#define LOC1_ABBR "W03"
+#define LOC1_LAT 0.0
+#define LOC1_LON 0.0
+
+#define LOC2_NAME "Lake Gaston"
+#define LOC2_ABBR "LKG"
+#define LOC2_LAT 0.0
+#define LOC2_LON 0.0
+
+#define LOC3_NAME "RDU"
+#define LOC3_ABBR "RDU"
+#define LOC3_LAT 35.8801
+#define LOC3_LON -78.7880
+
+#define NUM_LOCATIONS 3
