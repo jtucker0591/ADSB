@@ -160,7 +160,7 @@ The screen is divided into three vertical zones: **left 45%**, **center 10%**, *
 
 | View | Left tap | Center tap | Center HOLD (1s) | Right tap |
 |------|----------|------------|------------------|-----------|
-| **Radar** | Cycle filter (ALL → COM → MIL → EMG → HELI → FAST → SLOW → ODD) | Next view | — | Cycle range (150 → 100 → 50 → 20 → 5nm) |
+| **Radar** | Cycle filter (ALL → COM → MIL → EMG → HELI → FAST → SLOW → ODD) | Next view | Cycle location (if 2+ configured) | Cycle range (150 → 100 → 50 → 20 → 5nm) |
 | **Arrivals** | Cycle sort (DST → ALT → SPD) | Tap aircraft row → Detail view | — | Cycle range |
 | **Stats** | Brightness down (-12%) | Next view | Toggle night mode (green/amber) | Brightness up (+12%) |
 | **Log** | Previous page | Next view | — | Next page |
@@ -170,6 +170,8 @@ The screen is divided into three vertical zones: **left 45%**, **center 10%**, *
 **View cycle:** Radar → Arrivals → Stats → Log → Settings → Radar
 
 **Detail view** is not part of the normal cycle — tap an aircraft row in the Arrivals list to open it.
+
+**Location cycling:** long-press the center of the screen in Radar view to switch to the next configured location preset (LOC1 → LOC2 → LOC3 → LOC1 …). The radar clears and starts fresh at the new site — see "Location presets" below for how presets are configured and why the switch survives OTA updates.
 
 ## Settings Screen
 
@@ -205,6 +207,8 @@ cp src/secrets.example.h src/secrets.h
 Then edit `src/secrets.h` with your real WiFi credentials, home coordinates, and (optionally) up to two more location presets you can cycle to on-device. If `secrets.h` is missing, the build still succeeds using placeholder values (empty WiFi, `0,0` location) — it just won't actually work as a tracker until you fill it in.
 
 **Running more than one board:** each physical board needs its own `secrets.h` at the time you first flash it over USB, since that's what sets its WiFi and home location. After that first boot, the board saves its own identity into its own flash (NVS) automatically — it's no longer tied to whatever's compiled into `secrets.h`, and won't be affected by future shared OTA updates (see below). You only touch `secrets.h` again when building for a brand-new board.
+
+**Location presets (LOC1-3):** the same rule applies to `LOC1_NAME`/`LOC2_NAME`/`LOC3_NAME` and their coordinates — the full set is seeded into NVS the first time a board boots firmware built with its own real `secrets.h`, exactly like WiFi/home location. That's what makes on-device location cycling (long-press center in Radar view — see "Touch Controls" above) safe across OTA updates: without this, a shared/OTA build (always compiled with placeholder secrets — see "OTA Updates" below) would collapse every board's presets down to one blank entry the moment it took its first automatic update. Once seeded, changing a board's presets again means either editing them on-device (no settings-screen UI for that yet) or erasing NVS and reflashing over USB with an updated `secrets.h`.
 
 The `config_*.h` files you'll see in `src/` (`config_Hillsborough.h`, `config_New_Bern.h`, `config_W03.h`) are historical records from before this setup existed — each one was previously copied over `config.h` to build that specific board. They're no longer part of the active build and their real values have been redacted.
 

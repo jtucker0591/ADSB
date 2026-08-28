@@ -37,6 +37,14 @@
 // LOC2/LOC3 are optional alternates you can cycle to on-device (long-press
 // center in Radar view). Leave a slot's NAME empty ("") to disable it and
 // lower NUM_LOCATIONS to match.
+//
+// Like WiFi/home location, all of LOC1-3 are seeded into this board's NVS
+// flash the first time it boots firmware built with this secrets.h, and
+// from then on live there — not in whatever's compiled into a later shared
+// OTA build (which always uses placeholder values, see release.yml). To
+// change a board's presets after that first boot, you'd need to either
+// change them on-device (no settings-screen UI for that yet) or erase NVS
+// and reflash over USB with the updated secrets.h.
 #define LOC1_NAME "Home"
 #define LOC1_ABBR "HME"
 #define LOC1_LAT 0.0

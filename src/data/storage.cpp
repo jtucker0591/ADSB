@@ -6,6 +6,15 @@
 UserConfig g_config = {};
 static Preferences _prefs;
 
+static void seed_compiled_preset(LocationPreset &p, const char *name, const char *abbr, float lat, float lon) {
+    strncpy(p.name, name, sizeof(p.name) - 1);
+    p.name[sizeof(p.name) - 1] = '\0';
+    strncpy(p.abbr, abbr, sizeof(p.abbr) - 1);
+    p.abbr[sizeof(p.abbr) - 1] = '\0';
+    p.lat = lat;
+    p.lon = lon;
+}
+
 UserConfig storage_load_config() {
     UserConfig cfg;
 
@@ -90,6 +99,56 @@ UserConfig storage_load_config() {
     cfg.radar_zoom_idx = _prefs.getInt("rdr_zoom", cfg.radar_zoom_idx);
     cfg.arrivals_filter_idx = _prefs.getInt("arr_filt", cfg.arrivals_filter_idx);
 
+    // ---- Location presets ----
+    // Slot 0 mirrors this board's primary identity as already resolved
+    // above (location_name/abbr/home_lat/home_lon -- itself NVS-backed, or
+    // the compiled default only on a genuinely first-ever boot). Slots 1/2
+    // fall back to the compiled LOC2_*/LOC3_* macros. That fallback is only
+    // correct the first time a board boots firmware built with its OWN real
+    // secrets.h; once a slot is seeded into NVS below, a later shared/OTA
+    // build (compiled with placeholder secrets -- see release.yml) can
+    // never blank it out again, same rule as wifi_ssid/location_name above.
+    // This is deliberately NOT read from LOC1_NAME/LOC2_NAME/... directly
+    // at the call site (main.cpp) -- doing that was the bug this fixes:
+    // the compile-time array collapsed to one blank "Home" preset on any
+    // board's first OTA update, since the shared release binary never has
+    // a real secrets.h in it.
+    seed_compiled_preset(cfg.locations[0], cfg.location_name, cfg.location_abbr, cfg.home_lat, cfg.home_lon);
+    seed_compiled_preset(cfg.locations[1], LOC2_NAME, LOC2_ABBR, LOC2_LAT, LOC2_LON);
+    seed_compiled_preset(cfg.locations[2], LOC3_NAME, LOC3_ABBR, LOC3_LAT, LOC3_LON);
+    cfg.num_locations = NUM_LOCATIONS;
+    if (cfg.num_locations < 1) cfg.num_locations = 1;
+    if (cfg.num_locations > MAX_LOCATION_PRESETS) cfg.num_locations = MAX_LOCATION_PRESETS;
+
+    bool needs_seed_locations = false;
+    for (int i = 0; i < MAX_LOCATION_PRESETS; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "loc%d_name", i + 1);
+        String nvs_loc_i_name = _prefs.getString(key, "");
+        if (nvs_loc_i_name.length() == 0) {
+            if (i == 0) needs_seed_locations = true; // slot 0 must always be real
+            continue; // this slot has never been seeded -- keep the resolved default above
+        }
+        strlcpy(cfg.locations[i].name, nvs_loc_i_name.c_str(), sizeof(cfg.locations[i].name));
+
+        snprintf(key, sizeof(key), "loc%d_abbr", i + 1);
+        String nvs_loc_i_abbr = _prefs.getString(key, "");
+        if (nvs_loc_i_abbr.length() > 0) strlcpy(cfg.locations[i].abbr, nvs_loc_i_abbr.c_str(), sizeof(cfg.locations[i].abbr));
+
+        snprintf(key, sizeof(key), "loc%d_lat", i + 1);
+        cfg.locations[i].lat = _prefs.getFloat(key, cfg.locations[i].lat);
+
+        snprintf(key, sizeof(key), "loc%d_lon", i + 1);
+        cfg.locations[i].lon = _prefs.getFloat(key, cfg.locations[i].lon);
+    }
+    cfg.num_locations = _prefs.getInt("num_locs", cfg.num_locations);
+    if (cfg.num_locations < 1) cfg.num_locations = 1;
+    if (cfg.num_locations > MAX_LOCATION_PRESETS) cfg.num_locations = MAX_LOCATION_PRESETS;
+    cfg.loc_idx = _prefs.getInt("loc_idx", cfg.loc_idx);
+    if (cfg.loc_idx < 0 || cfg.loc_idx >= cfg.num_locations) cfg.loc_idx = 0;
+
+    needs_seed = needs_seed || needs_seed_locations;
+
     _prefs.end();
     Serial.println("Storage: config loaded from NVS");
 
@@ -127,6 +186,25 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putInt("map_zoom", cfg.map_zoom_idx);
     _prefs.putInt("rdr_zoom", cfg.radar_zoom_idx);
     _prefs.putInt("arr_filt", cfg.arrivals_filter_idx);
+
+    // Location presets -- written in full every save, same brute-force
+    // pattern as everything else in this function (not just on cycle).
+    // NVS write wear isn't a real concern here: saves only happen on
+    // explicit user actions (settings toggles, brightness, location
+    // cycling), nowhere near flash's ~100k-erase-cycle rating.
+    for (int i = 0; i < MAX_LOCATION_PRESETS; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "loc%d_name", i + 1);
+        _prefs.putString(key, cfg.locations[i].name);
+        snprintf(key, sizeof(key), "loc%d_abbr", i + 1);
+        _prefs.putString(key, cfg.locations[i].abbr);
+        snprintf(key, sizeof(key), "loc%d_lat", i + 1);
+        _prefs.putFloat(key, cfg.locations[i].lat);
+        snprintf(key, sizeof(key), "loc%d_lon", i + 1);
+        _prefs.putFloat(key, cfg.locations[i].lon);
+    }
+    _prefs.putInt("num_locs", cfg.num_locations);
+    _prefs.putInt("loc_idx", cfg.loc_idx);
 
     _prefs.end();
     Serial.println("Storage: config saved to NVS");

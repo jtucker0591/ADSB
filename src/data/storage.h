@@ -1,6 +1,18 @@
 #pragma once
 #include <cstdint>
 
+// One cyclable location preset (name/abbr/coordinates). LOC1-3 in
+// secrets.h seed these on first boot with this feature -- see
+// "Location presets" in storage.cpp for why they're persisted here at all
+// instead of just read from the LOC1_NAME/LOC2_NAME/... macros directly.
+#define MAX_LOCATION_PRESETS 3
+struct LocationPreset {
+    char name[24];
+    char abbr[4];
+    float lat;
+    float lon;
+};
+
 struct UserConfig {
     char wifi_ssid[33];
     char wifi_pass[65];
@@ -40,7 +52,15 @@ struct UserConfig {
     int map_zoom_idx;
     int radar_zoom_idx;
     int arrivals_filter_idx; // distance filter index for arrivals
-    int loc_idx;             // active location preset index (0-2)
+
+    // Location cycle presets. Seeded from LOC1_NAME/LOC1_LAT/... (secrets.h)
+    // into NVS on first boot with this feature, exactly like wifi_ssid/
+    // location_name above -- so a later shared/OTA build (compiled with
+    // placeholder secrets) can never collapse a board back down to one
+    // blank preset. locations[0] is always this board's primary/home site.
+    LocationPreset locations[MAX_LOCATION_PRESETS];
+    int num_locations;       // how many of locations[] are populated (1-3)
+    int loc_idx;             // active location preset index (0..num_locations-1), persisted
 };
 
 // Load config from NVS. Returns defaults if not found.

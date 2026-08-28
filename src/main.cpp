@@ -304,22 +304,41 @@ static void adjust_brightness(int delta) {
 }
 
 // ---- Location presets ----
-struct LocPreset { const char *name; const char *abbr; float lat; float lon; };
-static const LocPreset LOCATIONS[] = {
-    { LOC1_NAME, LOC1_ABBR, LOC1_LAT, LOC1_LON },
-    { LOC2_NAME, LOC2_ABBR, LOC2_LAT, LOC2_LON },
-    { LOC3_NAME, LOC3_ABBR, LOC3_LAT, LOC3_LON },
-};
-
+// Presets live in g_config.locations[] (storage.h/.cpp), seeded from
+// secrets.h into NVS on first boot with this feature and persisted from
+// then on -- NOT read from the LOC1_NAME/LOC2_NAME/... macros directly
+// here. That distinction matters once OTA is in the picture: the shared
+// release binary is always compiled with placeholder secrets (see
+// release.yml), so a compile-time-only LOCATIONS[] array would collapse
+// every board down to one blank "Home" preset the moment it took its first
+// OTA update. Reading from g_config instead means each board's real
+// presets, once seeded, survive that.
 static void cycle_location() {
-    int next = (g_config.loc_idx + 1) % NUM_LOCATIONS;
+    if (g_config.num_locations <= 1) return; // nothing else configured to cycle to
+
+    int next = (g_config.loc_idx + 1) % g_config.num_locations;
     g_config.loc_idx = next;
-    g_config.home_lat = LOCATIONS[next].lat;
-    g_config.home_lon = LOCATIONS[next].lon;
+    g_config.home_lat = g_config.locations[next].lat;
+    g_config.home_lon = g_config.locations[next].lon;
+    strlcpy(g_config.location_name, g_config.locations[next].name, sizeof(g_config.location_name));
+    strlcpy(g_config.location_abbr, g_config.locations[next].abbr, sizeof(g_config.location_abbr));
     storage_save_config(g_config);
+
+    // Clean switch: the aircraft list (and every trail in it) was built
+    // around the OLD home position. Left in place, it would show a few
+    // seconds of blips/trails plotted relative to a site we've just left,
+    // until the next poll (up to ADSB_POLL_INTERVAL_MS away) quietly
+    // replaces them -- e.g. Hillsborough traffic still on-screen, now
+    // mis-plotted relative to Lake Gaston. Clearing it means the new
+    // location starts from an empty radar instead of stale geography.
+    if (aircraft_list.lock(pdMS_TO_TICKS(50))) {
+        aircraft_list.count = 0;
+        aircraft_list.unlock();
+    }
+
+    tft.fillScreen(pal->bg);
     radar_needs_full_redraw = true;
     view_changed = true;
-    tft.fillScreen(pal->bg);
 }
 
 // ---- Night mode ----
@@ -522,12 +541,11 @@ static void draw_status_bar(bool force) {
         tft.setTextColor(pal->status, pal->status_bg);
     }
 
-    // Location abbreviation + Range. Preset 0 (this board's primary,
-    // persisted identity) reads from g_config so it survives a shared OTA
-    // build; presets 1/2, if configured, are compile-time-only cycling
-    // extras and read straight from LOCATIONS[] as before.
+    // Location abbreviation + Range. All presets -- not just this board's
+    // primary -- now read from g_config.locations[], so every one of them
+    // survives a shared OTA build (see the comment above cycle_location()).
     tft.setTextDatum(TR_DATUM);
-    const char *loc_abbr = (g_config.loc_idx == 0) ? g_config.location_abbr : LOCATIONS[g_config.loc_idx].abbr;
+    const char *loc_abbr = g_config.location_abbr;
     snprintf(buf, sizeof(buf), "%s %dnm", loc_abbr, (int)RANGES[range_idx]);
     tft.drawString(buf, 316, 3, 2);
 
@@ -1474,14 +1492,15 @@ tft.fillScreen(TFT_BLACK);
     health_init();
     g_config = storage_load_config();
     g_config.trails_enabled = false;
-    // NOTE: home_lat/home_lon come from storage_load_config() above, which
-    // already prefers a saved NVS value over the compiled default. Do NOT
-    // re-derive them from LOCATIONS[g_config.loc_idx] here — that would
-    // silently overwrite a board's persisted identity with whatever this
-    // particular firmware build happens to have compiled in (a problem now
-    // that one shared OTA build gets pushed to boards with different real
-    // locations). LOCATIONS[] is still used by cycle_location() when the
-    // user manually taps to switch presets.
+    // NOTE: home_lat/home_lon, and the full locations[] preset array, come
+    // from storage_load_config() above, which already prefers saved NVS
+    // values over compiled defaults. Do NOT re-derive them from the
+    // LOC1_LAT/LOC2_LAT/... macros here -- that would silently overwrite a
+    // board's persisted identity with whatever this particular firmware
+    // build happens to have compiled in, which is exactly wrong now that
+    // one shared OTA build gets pushed to boards with different real
+    // locations. cycle_location() reads g_config.locations[] for the same
+    // reason.
     aircraft_list.init();
     enrichment_init();
     fetcher_init(&aircraft_list);
@@ -1569,6 +1588,17 @@ void loop() {
             saved_ty = ty;
             if (!long_press_fired && (now - touch_down_time) >= LONG_PRESS_MS) {
                 long_press_fired = true;
+                // Long-press CENTER, Radar view only: cycle to the next
+                // configured location. Fires live at the hold threshold
+                // (not on release) so it can't also be read as a tap once
+                // the finger lifts. The center strip never overlaps the
+                // corner zones handle_corner_touch() uses (see
+                // TOUCH_LEFT_MAX/TOUCH_RIGHT_MIN above), so this can't
+                // collide with filter/range/view-switch gestures.
+                if (current_view == VIEW_RADAR &&
+                    saved_tx >= TOUCH_LEFT_MAX && saved_tx <= TOUCH_RIGHT_MIN) {
+                    cycle_location();
+                }
             }
         }
     } else {
