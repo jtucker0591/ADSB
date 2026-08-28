@@ -351,6 +351,13 @@ static void cycle_location() {
         aircraft_list.unlock();
     }
 
+    // Always land back on Radar so the switch is immediately visible, even
+    // when the gesture was held from Arrivals/Stats/Log (see the call site
+    // in loop() for why those are allowed to trigger this too). Without
+    // this, a successful switch from a non-Radar view was invisible until
+    // you separately navigated to Radar yourself -- indistinguishable from
+    // the gesture not having worked at all.
+    current_view = VIEW_RADAR;
     tft.fillScreen(pal->bg);
     radar_needs_full_redraw = true;
     view_changed = true;
@@ -1603,15 +1610,26 @@ void loop() {
             saved_ty = ty;
             if (!long_press_fired && (now - touch_down_time) >= LONG_PRESS_MS) {
                 long_press_fired = true;
-                // Long-press CENTER, Radar view only: cycle to the next
-                // configured location. Fires live at the hold threshold
-                // (not on release) so it can't also be read as a tap once
-                // the finger lifts. Uses the wide LOC_CYCLE_TX_MIN/MAX band
-                // (see above), not the narrow tap dead-zone, so it's an
-                // easy target to hold steady on. It also doesn't overlap
-                // the corner zones handle_corner_touch() uses, so it can't
-                // collide with filter/range/view-switch gestures.
-                if (current_view == VIEW_RADAR &&
+                // Long-press CENTER: cycle to the next configured location.
+                // Fires live at the hold threshold (not on release) so it
+                // can't also be read as a tap once the finger lifts. Uses
+                // the wide LOC_CYCLE_TX_MIN/MAX band (see above), not the
+                // narrow tap dead-zone, so it's an easy target to hold
+                // steady on. It also doesn't overlap the corner zones
+                // handle_corner_touch() uses, so it can't collide with
+                // filter/range/view-switch gestures.
+                //
+                // Deliberately available from RADAR/ARRIVALS/STATS/LOG, not
+                // just RADAR: auto_cycle() (below) can silently move you off
+                // Radar whenever you pause to look at the screen -- which is
+                // exactly when someone reaches over to switch locations. A
+                // Radar-only gate meant the gesture would do nothing without
+                // any indication why, if the view had drifted underneath
+                // you. cycle_location() itself jumps back to Radar on a
+                // successful switch, so the result is always visible no
+                // matter where the hold started.
+                if ((current_view == VIEW_RADAR || current_view == VIEW_ARRIVALS ||
+                     current_view == VIEW_STATS || current_view == VIEW_LOG) &&
                     saved_tx >= LOC_CYCLE_TX_MIN && saved_tx <= LOC_CYCLE_TX_MAX) {
                     cycle_location();
                 }
