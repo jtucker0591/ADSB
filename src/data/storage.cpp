@@ -121,6 +121,22 @@ UserConfig storage_load_config() {
     if (cfg.num_locations > MAX_LOCATION_PRESETS) cfg.num_locations = MAX_LOCATION_PRESETS;
 
     bool needs_seed_locations = false;
+#if HAS_REAL_SECRETS
+    // This build was compiled with this board's own real secrets.h (a
+    // local USB flash), so LOC1-3/NUM_LOCATIONS above are fresh and
+    // authoritative -- unconditionally re-persist them below rather than
+    // reading whatever's already in NVS.
+    //
+    // Without this, a board that ever took a generic OTA update BEFORE its
+    // first real-secrets flash of this feature gets num_locations/LOC2/LOC3
+    // permanently stuck at whatever that placeholder OTA build wrote
+    // (num_locations=1, blank LOC2/LOC3): the "only seed if NVS is empty"
+    // path below never re-triggers once slot 0's NVS key looks seeded
+    // (inherited from the older, pre-existing WiFi/location identity), so
+    // even a later, correct local reflash couldn't self-heal it -- it just
+    // silently kept reading the stale OTA-written values back out of NVS.
+    needs_seed_locations = true;
+#else
     for (int i = 0; i < MAX_LOCATION_PRESETS; i++) {
         char key[16];
         snprintf(key, sizeof(key), "loc%d_name", i + 1);
@@ -144,6 +160,7 @@ UserConfig storage_load_config() {
     cfg.num_locations = _prefs.getInt("num_locs", cfg.num_locations);
     if (cfg.num_locations < 1) cfg.num_locations = 1;
     if (cfg.num_locations > MAX_LOCATION_PRESETS) cfg.num_locations = MAX_LOCATION_PRESETS;
+#endif
     cfg.loc_idx = _prefs.getInt("loc_idx", cfg.loc_idx);
     if (cfg.loc_idx < 0 || cfg.loc_idx >= cfg.num_locations) cfg.loc_idx = 0;
 

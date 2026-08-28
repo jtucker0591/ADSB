@@ -7,8 +7,16 @@
 // placeholders are used instead so the build still succeeds.
 #if __has_include("secrets.h")
 #include "secrets.h"
+// This build was compiled with a real secrets.h (a local USB flash), not a
+// generic/OTA build -- release.yml always builds WITHOUT secrets.h, on
+// purpose, so the public binary never contains anyone's credentials or
+// coordinates. storage.cpp uses this flag to know when it's safe to treat
+// LOC1-3/NUM_LOCATIONS as authoritative and overwrite whatever's already
+// sitting in NVS, instead of deferring to NVS like a generic OTA build must.
+#define HAS_REAL_SECRETS 1
 #else
 #warning "src/secrets.h not found -- using placeholder WiFi/location. Copy src/secrets.example.h to src/secrets.h and fill in real values."
+#define HAS_REAL_SECRETS 0
 #define WIFI_SSID1 ""
 #define WIFI_PASS1 ""
 #define WIFI_SSID2 ""
@@ -64,7 +72,7 @@
 #define TOUCH_Y_MAX 280
 
 // Loading Page
-#define VERSION "v2.7"
+#define VERSION "v2.8"
 #define BUILD_DATE "08/28/2026"
 
 // ---- OTA updates ----
