@@ -144,6 +144,12 @@ void ota_check_and_apply_if_due() {
     client.setInsecure();
     client.setHandshakeTimeout(10);
     httpUpdate.rebootOnUpdate(true);
+    // GitHub's release asset URL (browser_download_url) is itself a
+    // redirect to the actual file on S3 (objects.githubusercontent.com).
+    // HTTPUpdate doesn't follow redirects by default, so without this it
+    // sees the 302 and reports it as a failure instead of chasing it to
+    // the real binary.
+    httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
 
     health_report_ota_start();
     t_httpUpdate_return ret = httpUpdate.update(client, asset_url);
