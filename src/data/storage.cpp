@@ -42,32 +42,34 @@ UserConfig storage_load_config() {
 
     _prefs.begin("adsb", true); // read-only
 
-    // No "ssid" key yet means this board has never saved to NVS before —
-    // either it's brand new, or it's booting the first firmware build that
-    // has this seeding logic at all. Either way, once we finish computing
-    // cfg below (compiled defaults, since no NVS overrides exist yet), we
-    // persist it so this board's WiFi/location identity is locked into its
-    // own flash from here on — a later shared OTA build (compiled with
-    // generic placeholder secrets) will never overwrite it, because NVS
-    // always wins over compiled defaults once the keys exist.
-    //
-    // "loc_name" is checked too (independently of "ssid") so that a board
-    // provisioned before location_name/location_abbr existed in this struct
-    // still gets them backfilled on its next boot, rather than silently
-    // reading the compiled placeholder forever. Because cfg already holds
-    // whatever NVS has for every OTHER field by the time we save below,
-    // this backfill never touches fields that were already persisted.
-    bool needs_seed = !_prefs.isKey("ssid") || !_prefs.isKey("loc_name");
+    // An EMPTY stored value is treated the same as a missing key, not
+    // trusted as "the real identity is blank". A board's WiFi/location
+    // should never legitimately be blank -- if NVS has an empty string
+    // here, something went wrong writing it (e.g. a settings screen
+    // action -- brightness, night mode, a toggle -- ran while a build with
+    // no real secrets.h was in memory, and silently persisted that blanked
+    // g_config back over the good saved values). Falling back to the
+    // compiled default in that case, and re-saving it below, means a
+    // corrupted entry self-heals the next time this board is flashed with
+    // its real secrets.h, instead of staying broken until someone notices
+    // and manually erases NVS.
+    String nvs_ssid = _prefs.getString("ssid", "");
+    String nvs_pass = _prefs.getString("pass", "");
+    String nvs_loc_name = _prefs.getString("loc_name", "");
+    String nvs_loc_abbr = _prefs.getString("loc_abbr", "");
 
-    // Override with NVS values where they exist
-    if (_prefs.isKey("ssid"))
-        strlcpy(cfg.wifi_ssid, _prefs.getString("ssid", cfg.wifi_ssid).c_str(), sizeof(cfg.wifi_ssid));
-    if (_prefs.isKey("pass"))
-        strlcpy(cfg.wifi_pass, _prefs.getString("pass", cfg.wifi_pass).c_str(), sizeof(cfg.wifi_pass));
-    if (_prefs.isKey("loc_name"))
-        strlcpy(cfg.location_name, _prefs.getString("loc_name", cfg.location_name).c_str(), sizeof(cfg.location_name));
-    if (_prefs.isKey("loc_abbr"))
-        strlcpy(cfg.location_abbr, _prefs.getString("loc_abbr", cfg.location_abbr).c_str(), sizeof(cfg.location_abbr));
+    // Empty ssid or loc_name (missing OR blank) means this board doesn't
+    // have a usable persisted identity yet -- once cfg below reflects the
+    // best available values (NVS where non-empty, compiled default
+    // otherwise), we persist it so a later shared OTA build (compiled with
+    // generic placeholder secrets) can never overwrite it again.
+    bool needs_seed = nvs_ssid.length() == 0 || nvs_loc_name.length() == 0;
+
+    // Override with NVS values where they're actually non-empty
+    if (nvs_ssid.length() > 0) strlcpy(cfg.wifi_ssid, nvs_ssid.c_str(), sizeof(cfg.wifi_ssid));
+    if (nvs_pass.length() > 0) strlcpy(cfg.wifi_pass, nvs_pass.c_str(), sizeof(cfg.wifi_pass));
+    if (nvs_loc_name.length() > 0) strlcpy(cfg.location_name, nvs_loc_name.c_str(), sizeof(cfg.location_name));
+    if (nvs_loc_abbr.length() > 0) strlcpy(cfg.location_abbr, nvs_loc_abbr.c_str(), sizeof(cfg.location_abbr));
     cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
     cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
