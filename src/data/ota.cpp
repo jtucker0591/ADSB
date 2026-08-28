@@ -2,6 +2,7 @@
 #include "../config.h"
 #include "error_log.h"
 #include "health.h"
+#include "http_mutex.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -127,15 +128,31 @@ void ota_check_and_apply_if_due() {
         return;
     }
 
+    // Same network lock the regular ADS-B fetch and route enrichment both
+    // hold for their own HTTPS calls. Without it, this function's requests
+    // (the release check, then the firmware download itself) could run
+    // concurrently with one of those other tasks' TLS connections -- and on
+    // a board this heap-constrained, two simultaneous TLS handshakes
+    // competing for the same small contiguous free block is exactly what
+    // produced "start_ssl_client: -1" failures during a real OTA update.
+    if (!http_mutex_acquire(pdMS_TO_TICKS(15000))) {
+        Serial.println("OTA: check skipped, couldn't get the network lock in time");
+        return;
+    }
+
     char tag[24] = {};
     char asset_url[256] = {};
     if (!fetch_latest_release(tag, sizeof(tag), asset_url, sizeof(asset_url))) {
         Serial.println("OTA: check failed (network or API)");
+        http_mutex_release();
         return;
     }
 
     Serial.printf("OTA: latest release %s (running %s)\n", tag, VERSION);
-    if (strcmp(tag, VERSION) == 0) return; // already current
+    if (strcmp(tag, VERSION) == 0) {
+        http_mutex_release();
+        return; // already current
+    }
 
     Serial.printf("OTA: updating to %s\n", tag);
     error_log_add("OTA: updating to %s", tag);
@@ -154,6 +171,7 @@ void ota_check_and_apply_if_due() {
     health_report_ota_start();
     t_httpUpdate_return ret = httpUpdate.update(client, asset_url);
     health_report_ota_end(); // only reached on failure -- success reboots via rebootOnUpdate(true)
+    http_mutex_release(); // only reached on failure too -- success reboots before this line
     switch (ret) {
         case HTTP_UPDATE_FAILED:
             error_log_add("OTA failed: %s", httpUpdate.getLastErrorString().c_str());

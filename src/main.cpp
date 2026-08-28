@@ -1413,7 +1413,7 @@ static void update_once_per_sec() {
 
 static void auto_cycle() {
     if (!g_config.cycle_enabled) return;
-    if (current_view == VIEW_LOADING || current_view == VIEW_DETAIL || current_view == VIEW_SETTINGS) return;
+    if (current_view == VIEW_LOADING || current_view == VIEW_DETAIL || current_view == VIEW_SETTINGS || current_view == VIEW_STATS) return;
 
     uint32_t now = millis();
 
