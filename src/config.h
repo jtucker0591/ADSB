@@ -64,7 +64,7 @@
 #define TOUCH_Y_MAX 280
 
 // Loading Page
-#define VERSION "v2.3"
+#define VERSION "v2.4"
 #define BUILD_DATE "08/28/2026"
 
 // ---- OTA updates ----

@@ -220,10 +220,19 @@ static const int INACTIVITY_VALS[] = {30, 60, 120};
 
 // ---- Helpers ----
 
+// Both of these deliberately read g_config.home_lat/home_lon (loaded from
+// NVS by storage_load_config()), not the compiled HOME_LAT/HOME_LON. Those
+// macros are 0.0/0.0 on a shared OTA build compiled with a placeholder
+// secrets.h -- reading them directly here computed every real aircraft as
+// thousands of nm from (0,0) and filtered all of them off the radar (while
+// the arrivals list, which doesn't go through latlon_to_radar(), kept
+// showing them fine). Same class of bug as the WiFi/location one fixed
+// earlier in fetcher.cpp/storage.cpp -- board identity has to come from
+// g_config, not compiled defaults, anywhere it's used.
 static float distance_nm(float lat, float lon) {
-    float dlat = lat - HOME_LAT;
-    float dlon = lon - HOME_LON;
-    float cos_lat = cosf(HOME_LAT * M_PI / 180.0f);
+    float dlat = lat - g_config.home_lat;
+    float dlon = lon - g_config.home_lon;
+    float cos_lat = cosf(g_config.home_lat * M_PI / 180.0f);
     float nm_north = dlat * 60.0f;
     float nm_east = dlon * 60.0f * cos_lat;
     return sqrtf(nm_north * nm_north + nm_east * nm_east);
@@ -231,9 +240,9 @@ static float distance_nm(float lat, float lon) {
 
 static bool latlon_to_radar(float lat, float lon, int &px, int &py) {
     float range_nm = RANGES[range_idx];
-    float dlat = lat - HOME_LAT;
-    float dlon = lon - HOME_LON;
-    float cos_lat = cosf(HOME_LAT * M_PI / 180.0f);
+    float dlat = lat - g_config.home_lat;
+    float dlon = lon - g_config.home_lon;
+    float cos_lat = cosf(g_config.home_lat * M_PI / 180.0f);
     float nm_north = dlat * 60.0f;
     float nm_east = dlon * 60.0f * cos_lat;
     if (sqrtf(nm_north * nm_north + nm_east * nm_east) > range_nm) return false;
