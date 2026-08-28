@@ -1,0 +1,62 @@
+name: Build and publish release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag v2.7
+#   git push origin v2.7
+#
+# Builds firmware.bin WITHOUT src/secrets.h -- it's gitignored, so this
+# checkout never has it, and config.h's placeholder fallback kicks in
+# automatically. That's exactly what a public release binary must use (see
+# README's "OTA Updates" section): the same shared binary goes out to every
+# board, and each board keeps its own WiFi/location in its own NVS flash.
+# A release built WITH real secrets.h would leak those credentials in a
+# public download -- this workflow can't do that even by mistake, since
+# secrets.h is never checked out in CI at all.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Confirm secrets.h is not present
+        run: |
+          if [ -f src/secrets.h ]; then
+            echo "::error::src/secrets.h is present in this checkout -- refusing to build a public release with it. It should be gitignored and never committed."
+            exit 1
+          fi
+
+      - name: Build firmware
+        run: pio run -e cyd
+
+      - name: Verify the pushed tag matches VERSION in config.h
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          COMPILED=$(grep -oP '#define VERSION "\K[^"]+' src/config.h)
+          if [ "$TAG" != "$COMPILED" ]; then
+            echo "::error::Pushed tag '$TAG' does not match VERSION \"$COMPILED\" in src/config.h. Bump config.h to match before tagging, or delete/re-push the correct tag."
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .pio/build/cyd/firmware.bin
+          name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

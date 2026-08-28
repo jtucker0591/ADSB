@@ -19,8 +19,20 @@
 // below), so one old failure doesn't count against the board forever.
 #define HEALTH_CONSECUTIVE_OK_TO_CLEAR_STREAK 12
 
-// How long an in-progress OTA update may run before it's considered hung.
-#define HEALTH_OTA_TIMEOUT_MS (3UL * 60 * 1000)
+// OTA-stuck detection is stall-based (time since the LAST progress tick),
+// not a single flat deadline from when the update started -- a real
+// firmware download+flash (~1.2MB over WiFi/TLS) can legitimately take a
+// couple minutes, and a flat timeout doesn't distinguish "slow but still
+// moving" from "actually stuck". Hit this exact problem on v2.4: an update
+// that was still progressing normally tripped a 3-minute flat deadline and
+// put up the fatal-error screen mid-download -- which risks someone seeing
+// "ERROR - RESTART NOW" and unplugging the board while a flash write is
+// in progress. Same fix as the stream reader in fetcher.cpp: no progress
+// for HEALTH_OTA_STALL_TIMEOUT_MS means genuinely stuck;
+// HEALTH_OTA_ABSOLUTE_TIMEOUT_MS is still there as a backstop so a
+// pathological trickle of tiny progress ticks can't stall this forever.
+#define HEALTH_OTA_STALL_TIMEOUT_MS (60UL * 1000)
+#define HEALTH_OTA_ABSOLUTE_TIMEOUT_MS (8UL * 60 * 1000)
 
 // How long the error screen stays up before auto-restarting.
 #define HEALTH_AUTO_RESTART_DELAY_MS (5UL * 60 * 1000)
@@ -41,6 +53,11 @@ void health_report_fetch_result(bool ok);
 // call (also from fetch_task).
 void health_report_ota_start();
 void health_report_ota_end();
+
+// ota.cpp's HTTPUpdate progress callback calls this on every tick (also
+// from fetch_task) -- resets the stall clock so a slow-but-moving download
+// never gets mistaken for a stuck one.
+void health_report_ota_progress();
 
 // main.cpp's loop() calls this every iteration. This is the only function
 // that touches NVS, so all Preferences access stays on the main task.

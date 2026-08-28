@@ -15,6 +15,7 @@ static volatile int _consecutive_fails = 0;
 static volatile int _consecutive_ok = 0;
 static volatile bool _ota_in_progress = false;
 static volatile uint32_t _ota_start_ms = 0;
+static volatile uint32_t _ota_last_progress_ms = 0;
 static volatile int _fatal_code = FATAL_NONE;
 
 // Main-task-only state (all NVS access happens here, never from fetch_task,
@@ -46,6 +47,7 @@ void health_report_fetch_result(bool ok) {
 
 void health_report_ota_start() {
     _ota_start_ms = millis();
+    _ota_last_progress_ms = _ota_start_ms;
     _ota_in_progress = true;
 }
 
@@ -53,10 +55,18 @@ void health_report_ota_end() {
     _ota_in_progress = false;
 }
 
+void health_report_ota_progress() {
+    _ota_last_progress_ms = millis();
+}
+
 bool health_check() {
-    if (_fatal_code == FATAL_NONE && _ota_in_progress &&
-        (millis() - _ota_start_ms) > HEALTH_OTA_TIMEOUT_MS) {
-        _fatal_code = FATAL_OTA_STUCK;
+    if (_fatal_code == FATAL_NONE && _ota_in_progress) {
+        uint32_t now = millis();
+        bool stalled = (now - _ota_last_progress_ms) > HEALTH_OTA_STALL_TIMEOUT_MS;
+        bool ran_too_long = (now - _ota_start_ms) > HEALTH_OTA_ABSOLUTE_TIMEOUT_MS;
+        if (stalled || ran_too_long) {
+            _fatal_code = FATAL_OTA_STUCK;
+        }
     }
 
     // Board has been running cleanly for a while -- clear the persisted

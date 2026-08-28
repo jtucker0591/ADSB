@@ -167,6 +167,12 @@ void ota_check_and_apply_if_due() {
     // sees the 302 and reports it as a failure instead of chasing it to
     // the real binary.
     httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    // Reports each progress tick to the health watchdog so it can tell
+    // "slow but still downloading" apart from "actually stuck" -- see the
+    // comment on HEALTH_OTA_STALL_TIMEOUT_MS in health.h.
+    httpUpdate.onProgress([](int cur, int total) {
+        health_report_ota_progress();
+    });
 
     health_report_ota_start();
     t_httpUpdate_return ret = httpUpdate.update(client, asset_url);
