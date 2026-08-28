@@ -218,6 +218,20 @@ static const int CYCLE_INTERVALS[] = {15, 30, 60, 90};
 static const int INACTIVITY_VALS[] = {30, 60, 120};
 #define LONG_PRESS_MS 1000
 
+// Center hit-zone for the long-press location-cycle gesture. Deliberately
+// its OWN constants, not a reuse of TOUCH_LEFT_MAX/TOUCH_RIGHT_MIN (defined
+// below, near the tap handlers) -- those mark a ~10%-wide (32px) dead zone
+// meant to separate quick LEFT/RIGHT taps in other views, which is fine to
+// aim for with a single deliberate tap but is an unreasonably tight target
+// to hold steady for a full second. A finger drifting even slightly off
+// dead-center during the hold landed outside that band, so the long-press
+// silently consumed the gesture (no cycle, and no fallback tap either) --
+// this is what "long-press does nothing" turned out to actually be, on top
+// of the NVS staleness bug fixed earlier. This band is 40% of the screen
+// width, centered the same place, and doesn't affect any other gesture.
+#define LOC_CYCLE_TX_MIN (LCD_H_RES * 3 / 10)  // 96
+#define LOC_CYCLE_TX_MAX (LCD_H_RES * 7 / 10)  // 224
+
 // ---- Helpers ----
 
 // Both of these deliberately read g_config.home_lat/home_lon (loaded from
@@ -314,6 +328,7 @@ static void adjust_brightness(int delta) {
 // OTA update. Reading from g_config instead means each board's real
 // presets, once seeded, survive that.
 static void cycle_location() {
+    Serial.printf("cycle_location: num_locations=%d loc_idx=%d\n", g_config.num_locations, g_config.loc_idx);
     if (g_config.num_locations <= 1) return; // nothing else configured to cycle to
 
     int next = (g_config.loc_idx + 1) % g_config.num_locations;
@@ -1591,12 +1606,13 @@ void loop() {
                 // Long-press CENTER, Radar view only: cycle to the next
                 // configured location. Fires live at the hold threshold
                 // (not on release) so it can't also be read as a tap once
-                // the finger lifts. The center strip never overlaps the
-                // corner zones handle_corner_touch() uses (see
-                // TOUCH_LEFT_MAX/TOUCH_RIGHT_MIN above), so this can't
+                // the finger lifts. Uses the wide LOC_CYCLE_TX_MIN/MAX band
+                // (see above), not the narrow tap dead-zone, so it's an
+                // easy target to hold steady on. It also doesn't overlap
+                // the corner zones handle_corner_touch() uses, so it can't
                 // collide with filter/range/view-switch gestures.
                 if (current_view == VIEW_RADAR &&
-                    saved_tx >= TOUCH_LEFT_MAX && saved_tx <= TOUCH_RIGHT_MIN) {
+                    saved_tx >= LOC_CYCLE_TX_MIN && saved_tx <= LOC_CYCLE_TX_MAX) {
                     cycle_location();
                 }
             }
