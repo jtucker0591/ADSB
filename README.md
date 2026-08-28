@@ -194,6 +194,8 @@ Available settings:
 
 This repo is public, but WiFi passwords and home coordinates obviously shouldn't be. Those live in `src/secrets.h`, which is listed in `.gitignore` and never committed.
 
+`ADSB_RADIUS_NM` (the API query radius) lives in `secrets.h` too, even though it's not sensitive — it's board-specific for a different reason: this device has no PSRAM, so near busy airspace (a major airport, a big city) a wide radius can pull back more aircraft data than it can reliably parse in memory. That fails as a `JSON error: NoMemory` in Serial, and looks like the splash screen just never advancing (it's waiting on a first successful fetch that never comes). If you see that, lower `ADSB_RADIUS_NM` for that board. Rural spots can usually run the full 50nm; anything near a Class B/C airport should probably start around 15-20nm.
+
 **First build on a new machine:**
 
 ```bash

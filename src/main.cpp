@@ -14,6 +14,7 @@
 #include "data/fetcher.h"
 #include "data/storage.h"
 #include "data/error_log.h"
+#include "data/health.h"
 #include "data/http_mutex.h"
 #include "data/enrichment.h"
 #include "data/ota.h"
@@ -1457,6 +1458,7 @@ tft.fillScreen(TFT_BLACK);
 
 // Data layer
     error_log_init();
+    health_init();
     g_config = storage_load_config();
     g_config.trails_enabled = false;
     // NOTE: home_lat/home_lon come from storage_load_config() above, which
@@ -1487,12 +1489,54 @@ tft.fillScreen(TFT_BLACK);
     ota_confirm_boot_ok(); // reached the end of setup() without crashing
 }
 
+// ---- Fatal error takeover ----
+// Drawn instead of the normal UI once health_check() latches -- see
+// data/health.h. Deliberately bypasses the day/night palette (pal->...)
+// since this needs to be maximally visible and unambiguous regardless of
+// display mode. Internally throttled to redraw at most once a second so
+// the countdown can visibly tick without flickering.
+static void draw_fatal_error() {
+    static uint32_t last_error_draw = 0;
+    uint32_t now = millis();
+    if (now - last_error_draw < 1000) return;
+    last_error_draw = now;
+
+    tft.fillScreen(TFT_RED);
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("ERROR", LCD_H_RES / 2, LCD_V_RES / 2 - 40, 4);
+    tft.drawString("RESTART NOW", LCD_H_RES / 2, LCD_V_RES / 2 - 10, 4);
+
+    const char *reason = health_fatal_reason();
+    if (reason && reason[0]) {
+        tft.drawString(reason, LCD_H_RES / 2, LCD_V_RES / 2 + 25, 2);
+    }
+
+    int32_t secs = health_seconds_until_restart();
+    char buf[40];
+    if (secs >= 0) {
+        snprintf(buf, sizeof(buf), "Auto-restart in %ds", (int)secs);
+    } else {
+        snprintf(buf, sizeof(buf), "Auto-restart limit reached");
+    }
+    tft.drawString(buf, LCD_H_RES / 2, LCD_V_RES / 2 + 50, 2);
+}
+
 // ---- Main loop ----
 
 static uint32_t last_draw = 0;
 static bool touch_was_down = false;
 
 void loop() {
+    // Fatal condition (memory exhaustion or a hung OTA update) takes over
+    // the whole screen and stops normal operation. health_check() also
+    // owns the auto-restart timing/cap -- see data/health.h.
+    if (health_check()) {
+        draw_fatal_error();
+        delay(200);
+        return;
+    }
+
     uint32_t now = millis();
 
     // Touch handling with long-press detection

@@ -31,13 +31,27 @@
 #define LOC3_LAT 0.0
 #define LOC3_LON 0.0
 #define NUM_LOCATIONS 1
+#define ADSB_RADIUS_NM 20
 #endif
 
-// ADS-B settings — reduced for CYD (no PSRAM, 320KB DRAM)
-#define ADSB_RADIUS_NM 50
+// ADS-B settings — reduced for CYD (no PSRAM, 320KB DRAM). ADSB_RADIUS_NM
+// is set in secrets.h (or above, if secrets.h is missing) since it's
+// board-specific: a busy-airspace board near a major airport needs a
+// smaller radius than a rural one, or the JSON response can be too big
+// for this device's limited memory to parse (shows up as a "NoMemory"
+// error in Serial and a splash screen that never advances).
 #define ADSB_POLL_INTERVAL_MS 5000
-#define MAX_AIRCRAFT 80
-#define TRAIL_LENGTH 15
+// 50 is plenty of headroom for real traffic while keeping the static
+// aircraft-list allocation smaller. When more aircraft are in range than
+// this, the tracker keeps the CLOSEST ones (see fetcher.cpp) rather than
+// whichever showed up first in the API response.
+#define MAX_AIRCRAFT 50
+// Trails (the fading line behind each aircraft) are a cosmetic extra --
+// kept minimal here to free memory for parsing. The heading arrow shown on
+// every aircraft is computed independently from live heading data, not
+// from this trail history, so it's unaffected by this value. Trails can
+// still be toggled on/off at runtime from the Settings screen.
+#define TRAIL_LENGTH 2
 
 // CYD display
 #define LCD_H_RES 320
@@ -50,8 +64,8 @@
 #define TOUCH_Y_MAX 280
 
 // Loading Page
-#define VERSION "v2.0"
-#define BUILD_DATE "08/24/2026"
+#define VERSION "v2.1"
+#define BUILD_DATE "08/28/2026"
 
 // ---- OTA updates ----
 // Public repo — no auth needed. Boards check GitHub's "latest release" API

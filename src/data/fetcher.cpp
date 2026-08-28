@@ -1,5 +1,6 @@
 #include "fetcher.h"
 #include "error_log.h"
+#include "health.h"
 #include "http_mutex.h"
 #include "ota.h"
 #include "../config.h"
@@ -9,6 +10,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include <cmath>
 
 static volatile NetType _active_net = NET_NONE;
 
@@ -62,6 +64,19 @@ static int find_aircraft(const char *hex) {
     return -1;
 }
 
+// Simple planar (equirectangular) approximation -- accurate enough at the
+// tens-of-nm ranges this tracker cares about, and cheap. Uses the CURRENT
+// runtime tracking center (g_config), not the compile-time HOME_LAT/LON, so
+// it stays correct if the board is cycled to a different location preset.
+static float fetch_distance_nm(float lat, float lon) {
+    float dlat = lat - g_config.home_lat;
+    float dlon = lon - g_config.home_lon;
+    float cos_lat = cosf(g_config.home_lat * (float)M_PI / 180.0f);
+    float nm_north = dlat * 60.0f;
+    float nm_east = dlon * 60.0f * cos_lat;
+    return sqrtf(nm_north * nm_north + nm_east * nm_east);
+}
+
 struct ParsedEntry {
     char hex[7];
     char callsign[9];
@@ -77,9 +92,6 @@ struct ParsedEntry {
     bool on_ground;
     float mach;
     int16_t ias, tas;
-    int32_t nav_altitude;
-    float roll;
-    float nav_qnh;
 };
 
 static void apply_parsed(Aircraft &a, const ParsedEntry &p, bool is_new) {
@@ -101,9 +113,6 @@ static void apply_parsed(Aircraft &a, const ParsedEntry &p, bool is_new) {
     a.mach = p.mach;
     a.ias = p.ias;
     a.tas = p.tas;
-    a.nav_altitude = p.nav_altitude;
-    a.roll = p.roll;
-    a.nav_qnh = p.nav_qnh;
     a.is_military = check_military(a.icao_hex);
     a.is_emergency = check_emergency(a.squawk);
     a.is_watched = false;
@@ -128,15 +137,35 @@ static void parse_aircraft_json(JsonDocument &doc) {
     Serial.printf("parse: ac array size=%d\n", ac.size());
 
     static ParsedEntry parsed[MAX_AIRCRAFT];
+    static float parsed_dist[MAX_AIRCRAFT];
     int parsed_count = 0;
 
+    // Keep the MAX_AIRCRAFT CLOSEST aircraft from this fetch, not just the
+    // first MAX_AIRCRAFT in whatever order the API returned them. Once the
+    // buffer is full, a new candidate only gets in by bumping out whichever
+    // kept aircraft is currently farthest away -- so when there's more
+    // traffic in range than we have room for, we consistently keep the
+    // closest ones.
     for (JsonObject obj : ac) {
-        if (parsed_count >= MAX_AIRCRAFT) break;
         float lat = obj["lat"] | 0.0f;
         float lon = obj["lon"] | 0.0f;
         if (lat == 0.0f && lon == 0.0f) continue;
 
-        ParsedEntry &p = parsed[parsed_count];
+        float d = fetch_distance_nm(lat, lon);
+
+        int target_idx;
+        if (parsed_count < MAX_AIRCRAFT) {
+            target_idx = parsed_count++;
+        } else {
+            int farthest = 0;
+            for (int i = 1; i < MAX_AIRCRAFT; i++)
+                if (parsed_dist[i] > parsed_dist[farthest]) farthest = i;
+            if (d >= parsed_dist[farthest]) continue; // farther than everything we're keeping
+            target_idx = farthest;
+        }
+
+        ParsedEntry &p = parsed[target_idx];
+        parsed_dist[target_idx] = d;
         strlcpy(p.hex, obj["hex"] | "", sizeof(p.hex));
         strlcpy(p.callsign, obj["flight"] | "", sizeof(p.callsign));
         for (int i = strlen(p.callsign) - 1; i >= 0 && p.callsign[i] == ' '; i--)
@@ -157,10 +186,6 @@ static void parse_aircraft_json(JsonDocument &doc) {
         p.mach = obj["mach"] | 0.0f;
         p.ias = (int16_t)(obj["ias"] | 0.0f);
         p.tas = (int16_t)(obj["tas"] | 0.0f);
-        p.nav_altitude = obj["nav_altitude_mcp"] | 0;
-        p.roll = obj["roll"] | 0.0f;
-        p.nav_qnh = obj["nav_qnh"] | 0.0f;
-        parsed_count++;
     }
 
     if (!_aircraft_list->aircraft || !_aircraft_list->lock()) return;
@@ -203,24 +228,26 @@ static void parse_aircraft_json(JsonDocument &doc) {
 
     // Pass 2: add aircraft that weren't already tracked. If the list is completely
     // full, evict the most evictable existing slot first — a long-stale aircraft, or
-    // failing that the oldest still-fresh one — instead of silently dropping new
-    // traffic for the rest of the session once MAX_AIRCRAFT has ever been reached.
-    // Military/emergency aircraft are never evicted.
+    // failing that the farthest-away still-fresh one — instead of silently dropping
+    // new traffic for the rest of the session once MAX_AIRCRAFT has ever been
+    // reached. Military/emergency aircraft are never evicted.
     for (int p = 0; p < parsed_count; p++) {
         if (find_aircraft(parsed[p].hex) >= 0) continue; // already handled in pass 1
 
         if (_aircraft_list->count >= MAX_AIRCRAFT) {
             int worst = -1;
-            uint32_t worst_score = 0;
+            float worst_score = 0;
             for (int i = 0; i < _aircraft_list->count; i++) {
                 Aircraft &cand = _aircraft_list->aircraft[i];
                 if (cand.is_military || cand.is_emergency) continue; // never bump these
                 // Any stale aircraft outranks any fresh one; among stale aircraft,
-                // the longest-gone is evicted first. Among fresh aircraft (all seen
-                // in this very cycle), the least-recently-updated goes first.
-                uint32_t score = (cand.stale_since != 0)
-                    ? (now - cand.stale_since) + 1000000UL
-                    : (now - cand.last_seen);
+                // the longest-gone is evicted first. Among fresh aircraft, the
+                // farthest-away one goes first, so the tracked list stays biased
+                // toward the closest traffic when there's more in range than
+                // MAX_AIRCRAFT slots.
+                float score = (cand.stale_since != 0)
+                    ? (float)(now - cand.stale_since) + 1000000.0f
+                    : fetch_distance_nm(cand.lat, cand.lon);
                 if (worst == -1 || score > worst_score) {
                     worst = i;
                     worst_score = score;
@@ -258,6 +285,69 @@ static void update_ip_addr() {
         strlcpy(_fstats.ip_addr, "N/A", sizeof(_fstats.ip_addr));
 }
 
+// Wraps a WiFiClient for ArduinoJson's streaming deserializer, adding the
+// same "wait for more data instead of giving up" tolerance the old manual
+// buffered read had. A plain Stream reader treats a momentary stall (no
+// bytes available yet, but the connection is still open and more data is on
+// the way -- normal on WiFi/TLS) as end-of-input, which surfaces as an
+// "IncompleteInput" parse error even though the response wasn't actually
+// truncated.
+//
+// The timeout here is stall-based (time since the LAST byte arrived), not a
+// single fixed budget for the whole download -- a busy fetch (50+ aircraft)
+// can take a while to fully arrive even over a perfectly healthy connection,
+// and a flat deadline punishes "slow but steady" the same as "actually
+// stuck". STREAM_ABSOLUTE_TIMEOUT_MS is still there as a backstop so a
+// pathological one-byte-at-a-time drip can't hang the task forever.
+#define STREAM_STALL_TIMEOUT_MS 8000
+#define STREAM_ABSOLUTE_TIMEOUT_MS 30000
+
+struct WaitingStreamReader {
+    WiFiClient *stream;
+    uint32_t start;
+    uint32_t last_progress;
+
+    explicit WaitingStreamReader(WiFiClient *s)
+        : stream(s), start(millis()), last_progress(millis()) {}
+
+    bool timed_out() const {
+        uint32_t now = millis();
+        return (int32_t)(now - last_progress) >= STREAM_STALL_TIMEOUT_MS ||
+               (int32_t)(now - start) >= STREAM_ABSOLUTE_TIMEOUT_MS;
+    }
+
+    int read() {
+        while (!timed_out()) {
+            if (stream->available() > 0) {
+                last_progress = millis();
+                return stream->read();
+            }
+            if (!stream->connected()) return -1;
+            vTaskDelay(1);
+        }
+        return -1;
+    }
+
+    size_t readBytes(char *buffer, size_t length) {
+        size_t got = 0;
+        while (got < length && !timed_out()) {
+            int avail = stream->available();
+            if (avail > 0) {
+                size_t n = stream->readBytes(buffer + got, min((size_t)avail, length - got));
+                if (n > 0) {
+                    got += n;
+                    last_progress = millis();
+                }
+            } else if (!stream->connected()) {
+                break;
+            } else {
+                vTaskDelay(1);
+            }
+        }
+        return got;
+    }
+};
+
 static void fetch_task(void *param) {
     // Wait for WiFi with retry and radio recycle
     Serial.print("Fetcher: waiting for WiFi");
@@ -282,13 +372,41 @@ static void fetch_task(void *param) {
     update_ip_addr();
     Serial.printf("\nWiFi connected, IP: %s\n", _fstats.ip_addr);
 
+    // The filter is small and constant-size (its shape never changes), so it's
+    // built ONCE here and reused every poll cycle. The parse JsonDocument
+    // (doc) is deliberately NOT reused the same way -- see the comment where
+    // it's declared, inside the loop below, for why.
+    JsonDocument filter;
+    JsonObject af = filter["ac"][0].to<JsonObject>();
+    af["hex"] = true;
+    af["flight"] = true;
+    af["r"] = true;
+    af["t"] = true;
+    af["category"] = true;
+    af["desc"] = true;
+    af["ownOp"] = true;
+    af["lat"] = true;
+    af["lon"] = true;
+    af["alt_baro"] = true;
+    af["gs"] = true;
+    af["track"] = true;
+    af["baro_rate"] = true;
+    af["squawk"] = true;
+    af["mach"] = true;
+    af["ias"] = true;
+    af["tas"] = true;
+    // nav_altitude_mcp / roll / nav_qnh are deliberately NOT requested --
+    // they're parsed and stored but never shown anywhere in the UI, so
+    // there's no reason to spend parse-tree memory on them.
+
 while (true) {
         if (network_connected()) {
             if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
                 char url[128];
                 snprintf(url, sizeof(url), "https://api.airplanes.live/v2/point/%.4f/%.4f/%d",
                          g_config.home_lat, g_config.home_lon, g_config.radius_nm);
-                Serial.printf("Fetching coords: %.4f, %.4f\n", g_config.home_lat, g_config.home_lon);
+                Serial.printf("Fetching coords: %.4f, %.4f, radius=%dnm\n",
+                    g_config.home_lat, g_config.home_lon, g_config.radius_nm);
                 WiFiClientSecure client;
                 client.setInsecure();
                 client.setHandshakeTimeout(10);
@@ -299,70 +417,48 @@ while (true) {
                 http.setTimeout(10000);
                 uint32_t t0 = millis();
                 int httpCode = http.GET();
-                Serial.printf("Fetch: HTTP %d, %lums, heap=%lu\n",
+                Serial.printf("Fetch: HTTP %d, %lums, heap=%lu, largest_free=%lu\n",
                     httpCode, (unsigned long)(millis() - t0),
-                    (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                    (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
                 if (httpCode == HTTP_CODE_OK) {
                     _fstats.last_fetch_ms = millis() - t0;
 
-                    // Read full response with deadline loop (fixes truncated JSON)
-                    int content_len = http.getSize();
-                    size_t buf_size = (content_len > 0) ? (size_t)content_len + 1 : 64 * 1024;
-                    char *buf = (char *)malloc(buf_size);
-                    size_t total = 0;
+                    // Parse directly from the HTTP stream with the filter applied,
+                    // rather than buffering the full raw response into RAM first.
+                    // Buffering the whole response (previously up to 64KB, or
+                    // whatever Content-Length reported -- 40KB+ near RDU even at a
+                    // 10nm radius) just to filter most of it straight back out was
+                    // the actual problem: the TLS handshake alone already
+                    // fragments this board's heap down to a ~45KB largest
+                    // contiguous block, so a 40KB buffer left almost nothing for
+                    // either the JSON parse itself or (if the buffer were kept
+                    // around) the next cycle's TLS handshake. Streaming +
+                    // filtering together means memory use scales with the fields
+                    // we keep per aircraft, not with how much traffic is in range.
+                    int reported_len = http.getSize();
+                    if (reported_len > 0) _fstats.bytes_received += (uint32_t)reported_len;
+                    WaitingStreamReader reader(http.getStreamPtr());
+                    uint32_t parse_t0 = millis();
 
-                    if (buf) {
-                        size_t target = (content_len > 0) ? (size_t)content_len : buf_size - 1;
-                        WiFiClient *stream = http.getStreamPtr();
-                        uint32_t deadline = millis() + 15000;
-                        while (total < target && millis() < deadline) {
-                            int avail = stream->available();
-                            if (avail > 0) {
-                                int to_read = min((size_t)avail, target - total);
-                                total += stream->readBytes(buf + total, to_read);
-                            } else if (!stream->connected()) {
-                                break;
-                            } else {
-                                vTaskDelay(1);
-                            }
-                        }
-                        buf[total] = '\0';
-                    }
-                    _fstats.bytes_received += total;
-
-                    // Parse with filter — only extract fields we need
-                    JsonDocument filter;
-                    JsonObject af = filter["ac"][0].to<JsonObject>();
-                    af["hex"] = true;
-                    af["flight"] = true;
-                    af["r"] = true;
-                    af["t"] = true;
-                    af["category"] = true;
-                    af["desc"] = true;
-                    af["ownOp"] = true;
-                    af["lat"] = true;
-                    af["lon"] = true;
-                    af["alt_baro"] = true;
-                    af["gs"] = true;
-                    af["track"] = true;
-                    af["baro_rate"] = true;
-                    af["squawk"] = true;
-                    af["mach"] = true;
-                    af["ias"] = true;
-                    af["tas"] = true;
-                    af["nav_altitude_mcp"] = true;
-                    af["roll"] = true;
-                    af["nav_qnh"] = true;
-
+                    // doc is deliberately a fresh, block-scoped object every cycle
+                    // rather than reused via .clear(): its internal pool grows to
+                    // match however many distinct aircraft are in a response, and
+                    // ArduinoJson's clear() resets contents WITHOUT releasing that
+                    // pool capacity back to the heap. A reused doc would grow
+                    // toward its peak size over a long-running, busy session and
+                    // then never shrink -- permanently reserving a chunk that
+                    // eventually collides with the next cycle's TLS handshake,
+                    // the same failure mode the read buffer had before. Being a
+                    // true stack local here means its destructor -- and its
+                    // memory -- releases fully the instant this block ends.
                     JsonDocument doc;
-                    DeserializationError err = (buf && total > 0)
-                        ? deserializeJson(doc, buf, total, DeserializationOption::Filter(filter))
-                        : DeserializationError::EmptyInput;
-                    if (buf) free(buf);
+                    DeserializationError err = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
 
                     if (!err) {
                         _fstats.fetch_ok++;
+                        health_report_fetch_result(true);
                         Serial.printf("JSON OK, ac array ptr=%p, heap=%lu\n",
                             (void*)_aircraft_list->aircraft,
                             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -373,11 +469,16 @@ while (true) {
                             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
                     } else {
                         _fstats.fetch_fail++;
+                        health_report_fetch_result(false);
                         error_log_add("JSON: %s", err.c_str());
-                        Serial.printf("JSON error: %s\n", err.c_str());
+                        Serial.printf("JSON error: %s, parse_ms=%lu, heap=%lu, largest_free=%lu\n",
+                            err.c_str(), (unsigned long)(millis() - parse_t0),
+                            (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                            (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
                     }
                 } else {
                     _fstats.fetch_fail++;
+                    health_report_fetch_result(false);
                     error_log_add("HTTP %d", httpCode);
                 }
                 http.end();

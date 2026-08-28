@@ -22,6 +22,14 @@
 #define HOME_LAT 0.0
 #define HOME_LON 0.0
 
+// API query radius in nautical miles. This device has no PSRAM, so near
+// busy airspace (a major airport, a big city) a wide radius can return
+// more aircraft data than it can reliably parse -- shows up as a
+// "NoMemory" error in Serial and a splash screen that never advances.
+// Start smaller (15-20) near heavy traffic; a rural spot can usually
+// handle 50 fine.
+#define ADSB_RADIUS_NM 30
+
 // Splash screen label for this board
 #define LOCATION_NAME "My Location"
 

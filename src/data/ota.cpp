@@ -1,6 +1,7 @@
 #include "ota.h"
 #include "../config.h"
 #include "error_log.h"
+#include "health.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -144,7 +145,9 @@ void ota_check_and_apply_if_due() {
     client.setHandshakeTimeout(10);
     httpUpdate.rebootOnUpdate(true);
 
+    health_report_ota_start();
     t_httpUpdate_return ret = httpUpdate.update(client, asset_url);
+    health_report_ota_end(); // only reached on failure -- success reboots via rebootOnUpdate(true)
     switch (ret) {
         case HTTP_UPDATE_FAILED:
             error_log_add("OTA failed: %s", httpUpdate.getLastErrorString().c_str());
