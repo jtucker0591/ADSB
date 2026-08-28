@@ -4,6 +4,11 @@
 struct UserConfig {
     char wifi_ssid[33];
     char wifi_pass[65];
+    char location_name[32]; // e.g. "Hillsborough, NC" -- persisted for the
+                             // same reason wifi_ssid/wifi_pass are: it must
+                             // survive a shared OTA build compiled with a
+                             // generic placeholder secrets.h.
+    char location_abbr[4];  // e.g. "HSB"
     float home_lat;
     float home_lon;
     int radius_nm;

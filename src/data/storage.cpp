@@ -14,6 +14,10 @@ UserConfig storage_load_config() {
     cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
     strncpy(cfg.wifi_pass, WIFI_PASS1, sizeof(cfg.wifi_pass) - 1);
     cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
+    strncpy(cfg.location_name, LOCATION_NAME, sizeof(cfg.location_name) - 1);
+    cfg.location_name[sizeof(cfg.location_name) - 1] = '\0';
+    strncpy(cfg.location_abbr, LOC1_ABBR, sizeof(cfg.location_abbr) - 1);
+    cfg.location_abbr[sizeof(cfg.location_abbr) - 1] = '\0';
     cfg.home_lat = HOME_LAT;
     cfg.home_lon = HOME_LON;
     cfg.radius_nm = ADSB_RADIUS_NM;
@@ -46,13 +50,24 @@ UserConfig storage_load_config() {
     // own flash from here on — a later shared OTA build (compiled with
     // generic placeholder secrets) will never overwrite it, because NVS
     // always wins over compiled defaults once the keys exist.
-    bool needs_seed = !_prefs.isKey("ssid");
+    //
+    // "loc_name" is checked too (independently of "ssid") so that a board
+    // provisioned before location_name/location_abbr existed in this struct
+    // still gets them backfilled on its next boot, rather than silently
+    // reading the compiled placeholder forever. Because cfg already holds
+    // whatever NVS has for every OTHER field by the time we save below,
+    // this backfill never touches fields that were already persisted.
+    bool needs_seed = !_prefs.isKey("ssid") || !_prefs.isKey("loc_name");
 
     // Override with NVS values where they exist
     if (_prefs.isKey("ssid"))
         strlcpy(cfg.wifi_ssid, _prefs.getString("ssid", cfg.wifi_ssid).c_str(), sizeof(cfg.wifi_ssid));
     if (_prefs.isKey("pass"))
         strlcpy(cfg.wifi_pass, _prefs.getString("pass", cfg.wifi_pass).c_str(), sizeof(cfg.wifi_pass));
+    if (_prefs.isKey("loc_name"))
+        strlcpy(cfg.location_name, _prefs.getString("loc_name", cfg.location_name).c_str(), sizeof(cfg.location_name));
+    if (_prefs.isKey("loc_abbr"))
+        strlcpy(cfg.location_abbr, _prefs.getString("loc_abbr", cfg.location_abbr).c_str(), sizeof(cfg.location_abbr));
     cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
     cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
@@ -78,7 +93,7 @@ UserConfig storage_load_config() {
 
     if (needs_seed) {
         storage_save_config(cfg);
-        Serial.println("Storage: first boot with no saved identity -- seeded this board's WiFi/location to NVS");
+        Serial.println("Storage: saved/backfilled this board's WiFi/location identity to NVS");
     }
 
     return cfg;
@@ -89,6 +104,8 @@ void storage_save_config(const UserConfig &cfg) {
 
     _prefs.putString("ssid", cfg.wifi_ssid);
     _prefs.putString("pass", cfg.wifi_pass);
+    _prefs.putString("loc_name", cfg.location_name);
+    _prefs.putString("loc_abbr", cfg.location_abbr);
     _prefs.putFloat("lat", cfg.home_lat);
     _prefs.putFloat("lon", cfg.home_lon);
     _prefs.putInt("radius", cfg.radius_nm);

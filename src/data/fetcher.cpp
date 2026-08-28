@@ -358,15 +358,24 @@ static void fetch_task(void *param) {
         wait_cycles++;
         // After 20s (40 cycles), recycle radio and retry
         if (wait_cycles % 40 == 0) {
-            const char* ssids[] = {WIFI_SSID1, WIFI_SSID2, WIFI_SSID3};
-            const char* passes[] = {WIFI_PASS1, WIFI_PASS2, WIFI_PASS3};
+            // Index 0 is THIS board's own persisted network (g_config, from
+            // NVS), not the compiled WIFI_SSID1 -- see the comment in
+            // fetcher_init() below for why that distinction matters.
+            const char* ssids[] = {g_config.wifi_ssid, WIFI_SSID2, WIFI_SSID3};
+            const char* passes[] = {g_config.wifi_pass, WIFI_PASS2, WIFI_PASS3};
             int net_idx = (wait_cycles / 40) % 3;
-            Serial.printf("\nWiFi retry — trying [%s] (attempt %d)\n", ssids[net_idx], wait_cycles / 40 + 1);
-            WiFi.disconnect(false);
-            WiFi.mode(WIFI_OFF);
-            vTaskDelay(pdMS_TO_TICKS(500));
-            WiFi.mode(WIFI_STA);
-            WiFi.begin(ssids[net_idx], passes[net_idx]);
+            if (ssids[net_idx][0] == '\0') {
+                // No network configured in this fallback slot -- skip
+                // straight past it instead of calling WiFi.begin() with a
+                // blank SSID (which just logs an error and wastes a cycle).
+            } else {
+                Serial.printf("\nWiFi retry — trying [%s] (attempt %d)\n", ssids[net_idx], wait_cycles / 40 + 1);
+                WiFi.disconnect(false);
+                WiFi.mode(WIFI_OFF);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                WiFi.mode(WIFI_STA);
+                WiFi.begin(ssids[net_idx], passes[net_idx]);
+            }
         }
     }
     update_ip_addr();
@@ -581,8 +590,21 @@ void fetcher_init(AircraftList *list) {
     WiFi.setAutoReconnect(true);
 
     // Start WiFi non-blocking — fetch_task handles retry/wait
-    const char* ssids[] = {WIFI_SSID1, WIFI_SSID2, WIFI_SSID3};
-    const char* passes[] = {WIFI_PASS1, WIFI_PASS2, WIFI_PASS3};
+    //
+    // Index 0 deliberately reads g_config.wifi_ssid/wifi_pass (loaded from
+    // NVS by storage_load_config(), called just before fetcher_init() in
+    // setup()) rather than the compiled WIFI_SSID1/WIFI_PASS1. storage.cpp
+    // already persists a board's real WiFi to its own flash on first boot
+    // specifically so a later shared OTA build -- compiled with a generic
+    // placeholder secrets.h, as documented in the README -- can't wipe out
+    // an already-provisioned board's network. This is that other half of
+    // the contract: without reading g_config here, that NVS value was just
+    // sitting there unused while WiFi.begin() used the (blank, on a shared
+    // OTA build) compiled default instead -- which is exactly what caused
+    // this board to lose WiFi entirely after updating to a placeholder-built
+    // release.
+    const char* ssids[] = {g_config.wifi_ssid, WIFI_SSID2, WIFI_SSID3};
+    const char* passes[] = {g_config.wifi_pass, WIFI_PASS2, WIFI_PASS3};
     Serial.printf("WiFi trying: [%s]\n", ssids[0]);
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssids[0], passes[0]);

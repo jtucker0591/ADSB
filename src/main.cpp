@@ -513,9 +513,13 @@ static void draw_status_bar(bool force) {
         tft.setTextColor(pal->status, pal->status_bg);
     }
 
-    // Location abbreviation + Range
+    // Location abbreviation + Range. Preset 0 (this board's primary,
+    // persisted identity) reads from g_config so it survives a shared OTA
+    // build; presets 1/2, if configured, are compile-time-only cycling
+    // extras and read straight from LOCATIONS[] as before.
     tft.setTextDatum(TR_DATUM);
-    snprintf(buf, sizeof(buf), "%s %dnm", LOCATIONS[g_config.loc_idx].abbr, (int)RANGES[range_idx]);
+    const char *loc_abbr = (g_config.loc_idx == 0) ? g_config.location_abbr : LOCATIONS[g_config.loc_idx].abbr;
+    snprintf(buf, sizeof(buf), "%s %dnm", loc_abbr, (int)RANGES[range_idx]);
     tft.drawString(buf, 316, 3, 2);
 
     // Last update age
@@ -599,7 +603,7 @@ static void draw_loading() {
     tft.setTextDatum(MC_DATUM);
     tft.drawString("ADS-B Radar", cx, cy - r - 20, 4);
     tft.setTextColor(pal->fade_med, pal->bg);
-    tft.drawString(LOCATION_NAME, cx, cy + r + 50, 1);
+    tft.drawString(g_config.location_name, cx, cy + r + 50, 1);
     tft.drawString(VERSION " - " BUILD_DATE, cx, cy + r + 62, 1);
 }
 
@@ -937,7 +941,7 @@ static void draw_stats() {
         y += 18;
     };
 
-    row("LOCATION", LOCATION_NAME);
+    row("LOCATION", g_config.location_name);
     snprintf(buf, sizeof(buf), "%s   ", WiFi.SSID().c_str());
     row("NETWORK", buf);
     row("IP ADDR", fs->ip_addr);
