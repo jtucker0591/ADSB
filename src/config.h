@@ -72,8 +72,8 @@
 #define TOUCH_Y_MAX 280
 
 // Loading Page
-#define VERSION "v2.10"
-#define BUILD_DATE "08/28/2026"
+#define VERSION "v2.11"
+#define BUILD_DATE "09/02/2026"
 
 // ---- OTA updates ----
 // Public repo — no auth needed. Boards check GitHub's "latest release" API

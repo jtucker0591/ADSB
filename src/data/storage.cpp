@@ -74,13 +74,32 @@ UserConfig storage_load_config() {
     // generic placeholder secrets) can never overwrite it again.
     bool needs_seed = nvs_ssid.length() == 0 || nvs_loc_name.length() == 0;
 
-    // Override with NVS values where they're actually non-empty
+#if HAS_REAL_SECRETS
+    // This build was compiled with THIS board's own real secrets.h (a
+    // local USB flash) -- wifi_ssid/pass/location_name/abbr/home_lat/lon
+    // above are fresh and authoritative, exactly like LOC1-3/NUM_LOCATIONS
+    // further down. Skip the "prefer whatever's already in NVS" override
+    // entirely and force a re-save below.
+    //
+    // Without this, a board that ever carried a DIFFERENT board's identity
+    // in its flash (reused/repurposed hardware, e.g. an inventory spare
+    // that used to run as someone else's board) keeps reading that stale
+    // identity back out of NVS forever -- even a correct local reflash
+    // with the right secrets.h can't self-heal it, because this override
+    // ran unconditionally regardless of HAS_REAL_SECRETS. Same class of
+    // bug v2.8 fixed for LOC1-3/NUM_LOCATIONS, one level up.
+    needs_seed = true;
+#else
+    // Generic/OTA build (no real secrets.h) -- override with NVS values
+    // where they're actually non-empty, so a shared placeholder build can
+    // never blank out a board's real identity.
     if (nvs_ssid.length() > 0) strlcpy(cfg.wifi_ssid, nvs_ssid.c_str(), sizeof(cfg.wifi_ssid));
     if (nvs_pass.length() > 0) strlcpy(cfg.wifi_pass, nvs_pass.c_str(), sizeof(cfg.wifi_pass));
     if (nvs_loc_name.length() > 0) strlcpy(cfg.location_name, nvs_loc_name.c_str(), sizeof(cfg.location_name));
     if (nvs_loc_abbr.length() > 0) strlcpy(cfg.location_abbr, nvs_loc_abbr.c_str(), sizeof(cfg.location_abbr));
     cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
     cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
+#endif
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.use_metric = _prefs.getBool("metric", cfg.use_metric);
     cfg.use_ethernet = _prefs.getBool("use_eth", cfg.use_ethernet);
