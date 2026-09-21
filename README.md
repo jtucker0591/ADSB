@@ -212,6 +212,17 @@ Then edit `src/secrets.h` with your real WiFi credentials, home coordinates, and
 
 The `config_*.h` files you'll see in `src/` (`config_Hillsborough.h`, `config_New_Bern.h`, `config_W03.h`) are historical records from before this setup existed — each one was previously copied over `config.h` to build that specific board. They're no longer part of the active build and their real values have been redacted.
 
+**Backup copies of `secrets.h` (e.g. `secrets.h.some-board.bak`, used when juggling more than one board's identity on the same machine) are just as sensitive as `secrets.h` itself and must never be committed either.** On 2026-09-21, four such backups (real WiFi passwords for four different networks) got committed and pushed to this public repo by accident. That's fixed (history rewritten, passwords rotated), and two things now guard against it happening again:
+
+- `.gitignore` covers `src/secrets.h.*` and `*.bak` generally, not just the exact `src/secrets.h` path.
+- A pre-push hook (`.githooks/pre-push`) blocks any push that adds a `secrets.h*`/`.bak` file or a real-looking `WIFI_PASS`/`WIFI_SSID` value. It's not active by default on a fresh clone — run this once per machine you push from:
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+- A `secret-scan` GitHub Actions workflow (gitleaks) runs on every push as a backstop, in case a push comes from a machine that skipped the step above.
+
+Consider also enabling GitHub's own secret scanning + push protection for this repo (Settings → Code security) — free for public repos, and it blocks the push server-side before GitHub even accepts it.
+
 ## OTA Updates
 
 Boards check for new firmware automatically once a day (`OTA_CHECK_INTERVAL_MS` in `config.h`) by reading this repo's latest GitHub Release, and install it if the release tag differs from the running `VERSION`. No manifest file to maintain — just GitHub's built-in "latest release" API.

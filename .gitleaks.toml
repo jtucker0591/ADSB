@@ -1,0 +1,28 @@
+title = "adsb-cyd-main gitleaks config"
+
+# Extends gitleaks' default ruleset (generic API keys/tokens/high-entropy
+# strings) and adds rules specific to this project's actual incident
+# (2026-09-21: src/secrets.h.*.bak committed with real WiFi passwords).
+[extend]
+useDefault = true
+
+[[rules]]
+id = "adsb-wifi-credential"
+description = "Real-looking WIFI_PASS/WIFI_SSID #define value (placeholders like \"\" and REDACTED are fine)"
+regex = '''#define\s+WIFI_(PASS|SSID)[0-9]?\s+"[^"]+"'''
+path = '''.*\.h$|.*\.cpp$'''
+
+[rules.allowlist]
+regexes = [
+  '''#define\s+WIFI_(PASS|SSID)[0-9]?\s+""''',
+  '''#define\s+WIFI_(PASS|SSID)[0-9]?\s+"REDACTED"''',
+]
+paths = [
+  '''src/secrets\.example\.h''',
+]
+
+[[rules]]
+id = "adsb-secrets-backup-file"
+description = "A secrets.h backup or .bak file, which should never be committed"
+regex = '''.*'''
+path = '''(^|/)secrets\.h(\..+)?$|\.bak$'''
