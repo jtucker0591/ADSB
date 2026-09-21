@@ -412,7 +412,21 @@ while (true) {
         if (network_connected()) {
             if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
                 char url[128];
-                snprintf(url, sizeof(url), "https://api.airplanes.live/v2/point/%.4f/%.4f/%d",
+                // Switched off api.airplanes.live (2026-09-21): it quietly
+                // moved this endpoint behind feeder-only auth sometime around
+                // Aug 2026 -- every board in the fleet started getting HTTP 403
+                // here within the same ~40s window (8 consecutive fails trips
+                // the fatal-error watchdog, see health.h), which is why they
+                // all hit the red screen at once. Tried api.adsb.lol next, but
+                // it 403s anonymous clients too ("User-Agent too generic" --
+                // per their own README they're heading toward feeder-only API
+                // keys as well). Landed on adsb.fi's documented-open v3
+                // endpoint instead (opendata.adsb.fi, ADSBExchange-compatible
+                // shape, 1 req/s limit -- fine at our 5s poll interval, no key
+                // required as of 2026-09-21). If this one also starts 403ing
+                // down the road, that's the pattern to expect: check
+                // opendata.adsb.fi/api (README) for what changed.
+                snprintf(url, sizeof(url), "https://opendata.adsb.fi/api/v3/lat/%.4f/lon/%.4f/dist/%d",
                          g_config.home_lat, g_config.home_lon, g_config.radius_nm);
                 Serial.printf("Fetching coords: %.4f, %.4f, radius=%dnm\n",
                     g_config.home_lat, g_config.home_lon, g_config.radius_nm);
@@ -422,7 +436,7 @@ while (true) {
 
                 HTTPClient http;
                 http.begin(client, url);
-                http.addHeader("User-Agent", "Mozilla/5.0 (compatible; ADSB-CYD/1.0)");
+                http.addHeader("User-Agent", "ADSB-CYD/2.12 (+https://github.com/jtucker0591/ADSB; jtucker0591@gmail.com)");
                 http.setTimeout(10000);
                 uint32_t t0 = millis();
                 int httpCode = http.GET();
@@ -434,21 +448,24 @@ while (true) {
                 if (httpCode == HTTP_CODE_OK) {
                     _fstats.last_fetch_ms = millis() - t0;
 
-                    // Parse directly from the HTTP stream with the filter applied,
-                    // rather than buffering the full raw response into RAM first.
-                    // Buffering the whole response (previously up to 64KB, or
-                    // whatever Content-Length reported -- 40KB+ near RDU even at a
-                    // 10nm radius) just to filter most of it straight back out was
-                    // the actual problem: the TLS handshake alone already
-                    // fragments this board's heap down to a ~45KB largest
-                    // contiguous block, so a 40KB buffer left almost nothing for
-                    // either the JSON parse itself or (if the buffer were kept
-                    // around) the next cycle's TLS handshake. Streaming +
-                    // filtering together means memory use scales with the fields
-                    // we keep per aircraft, not with how much traffic is in range.
-                    int reported_len = http.getSize();
-                    if (reported_len > 0) _fstats.bytes_received += (uint32_t)reported_len;
-                    WaitingStreamReader reader(http.getStreamPtr());
+                    // Switched off streaming-from-raw-socket here (2026-09-21):
+                    // that approach relied on http.getStreamPtr() handing back
+                    // clean de-chunked body bytes, which held for
+                    // airplanes.live/adsb.lol (both sent a real Content-Length).
+                    // adsb.fi sends this response with Transfer-Encoding: chunked
+                    // (getSize() reports -1) -- reading getStreamPtr() directly
+                    // gets the RAW chunk-framed wire bytes (hex chunk-size lines
+                    // etc.), not the JSON body, which is why "ac" was parsing as
+                    // an empty array with no error (valid-looking garbage, not
+                    // truncated garbage). HTTPClient::getString() does its own
+                    // chunked decoding internally, so buffer through that instead.
+                    // Heap has held a steady ~130KB free / ~77KB largest-contiguous
+                    // across every fetch we've logged, so buffering this response
+                    // (a few KB typical, tens of KB on a very busy traffic day) is
+                    // fine here -- but if boards start showing memory pressure on
+                    // heavy-traffic days, this buffering is the first place to look.
+                    String body = http.getString();
+                    if (body.length() > 0) _fstats.bytes_received += (uint32_t)body.length();
                     uint32_t parse_t0 = millis();
 
                     // doc is deliberately a fresh, block-scoped object every cycle
@@ -463,7 +480,7 @@ while (true) {
                     // true stack local here means its destructor -- and its
                     // memory -- releases fully the instant this block ends.
                     JsonDocument doc;
-                    DeserializationError err = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
+                    DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
 
                     if (!err) {
                         _fstats.fetch_ok++;
