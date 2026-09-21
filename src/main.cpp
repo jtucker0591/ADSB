@@ -1576,6 +1576,28 @@ static void draw_fatal_error() {
     tft.drawString(buf, LCD_H_RES / 2, LCD_V_RES / 2 + 50, 2);
 }
 
+// ---- OTA progress takeover ----
+// Drawn instead of the normal UI while a healthy OTA download is running --
+// see health_ota_in_progress()/health_ota_percent() in data/health.h. Same
+// throttle-to-1s pattern as draw_fatal_error() above so the percentage can
+// tick up visibly without flickering, and deliberately plain (no day/night
+// palette) for the same reason: maximally clear regardless of display mode.
+static void draw_ota_progress() {
+    static uint32_t last_ota_draw = 0;
+    uint32_t now = millis();
+    if (now - last_ota_draw < 1000) return;
+    last_ota_draw = now;
+
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("UPDATE IN PROGRESS", LCD_H_RES / 2, LCD_V_RES / 2 - 20, 4);
+
+    char pctbuf[24];
+    snprintf(pctbuf, sizeof(pctbuf), "%d%% COMPLETE", health_ota_percent());
+    tft.drawString(pctbuf, LCD_H_RES / 2, LCD_V_RES / 2 + 20, 4);
+}
+
 // ---- Main loop ----
 
 static uint32_t last_draw = 0;
@@ -1587,6 +1609,17 @@ void loop() {
     // owns the auto-restart timing/cap -- see data/health.h.
     if (health_check()) {
         draw_fatal_error();
+        delay(200);
+        return;
+    }
+
+    // A normal (non-stuck) OTA download in progress takes over the screen
+    // too, so the board doesn't just sit there looking frozen for the
+    // roughly 30-60s a real update takes. health_check() above already
+    // covers the failure case (a stalled/too-long download trips
+    // FATAL_OTA_STUCK); this is just the friendly "it's working" version.
+    if (health_ota_in_progress()) {
+        draw_ota_progress();
         delay(200);
         return;
     }

@@ -56,8 +56,17 @@ void health_report_ota_end();
 
 // ota.cpp's HTTPUpdate progress callback calls this on every tick (also
 // from fetch_task) -- resets the stall clock so a slow-but-moving download
-// never gets mistaken for a stuck one.
-void health_report_ota_progress();
+// never gets mistaken for a stuck one, and records percent complete for
+// the "UPDATE IN PROGRESS" screen below.
+void health_report_ota_progress(int percent);
+
+// main.cpp's loop() calls these to draw a live "UPDATE IN PROGRESS XX%"
+// screen while a healthy OTA download is running, instead of the normal
+// UI. Distinct from health_check()'s FATAL_OTA_STUCK path: that one only
+// trips if the download stalls or runs too long, this is just the
+// friendly "it's working, hang on" version of the same in-progress state.
+bool health_ota_in_progress();
+int health_ota_percent();
 
 // main.cpp's loop() calls this every iteration. This is the only function
 // that touches NVS, so all Preferences access stays on the main task.

@@ -14,6 +14,7 @@ enum FatalCode { FATAL_NONE = 0, FATAL_MEMORY = 1, FATAL_OTA_STUCK = 2 };
 static volatile int _consecutive_fails = 0;
 static volatile int _consecutive_ok = 0;
 static volatile bool _ota_in_progress = false;
+static volatile int _ota_percent = 0;
 static volatile uint32_t _ota_start_ms = 0;
 static volatile uint32_t _ota_last_progress_ms = 0;
 static volatile int _fatal_code = FATAL_NONE;
@@ -49,15 +50,20 @@ void health_report_ota_start() {
     _ota_start_ms = millis();
     _ota_last_progress_ms = _ota_start_ms;
     _ota_in_progress = true;
+    _ota_percent = 0;
 }
 
 void health_report_ota_end() {
     _ota_in_progress = false;
 }
 
-void health_report_ota_progress() {
+void health_report_ota_progress(int percent) {
     _ota_last_progress_ms = millis();
+    _ota_percent = percent;
 }
+
+bool health_ota_in_progress() { return _ota_in_progress; }
+int health_ota_percent() { return _ota_percent; }
 
 bool health_check() {
     if (_fatal_code == FATAL_NONE && _ota_in_progress) {

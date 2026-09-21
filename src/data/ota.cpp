@@ -171,7 +171,10 @@ void ota_check_and_apply_if_due() {
     // "slow but still downloading" apart from "actually stuck" -- see the
     // comment on HEALTH_OTA_STALL_TIMEOUT_MS in health.h.
     httpUpdate.onProgress([](int cur, int total) {
-        health_report_ota_progress();
+        int pct = (total > 0) ? (int)((cur * 100L) / total) : 0;
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        health_report_ota_progress(pct);
     });
 
     health_report_ota_start();
