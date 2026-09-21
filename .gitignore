@@ -2,3 +2,5 @@
 .vscode
 .claude-sessions
 src/secrets.h
+src/secrets.h.*
+*.bak
