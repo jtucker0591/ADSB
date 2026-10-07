@@ -16,6 +16,15 @@ struct LocationPreset {
 struct UserConfig {
     char wifi_ssid[33];
     char wifi_pass[65];
+    // Fallback networks 2 and 3. Persisted to NVS exactly like slot 1 so a
+    // shared OTA build (compiled with blank placeholder secrets) can't wipe
+    // them -- before v2.14 these were read straight from the compiled
+    // WIFI_SSID2/3 macros, so any board that took an OTA update silently
+    // lost its fallbacks and only ever tried network 1.
+    char wifi_ssid2[33];
+    char wifi_pass2[65];
+    char wifi_ssid3[33];
+    char wifi_pass3[65];
     char location_name[32]; // e.g. "Hillsborough, NC" -- persisted for the
                              // same reason wifi_ssid/wifi_pass are: it must
                              // survive a shared OTA build compiled with a

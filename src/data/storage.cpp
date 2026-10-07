@@ -23,6 +23,10 @@ UserConfig storage_load_config() {
     cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
     strncpy(cfg.wifi_pass, WIFI_PASS1, sizeof(cfg.wifi_pass) - 1);
     cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
+    strlcpy(cfg.wifi_ssid2, WIFI_SSID2, sizeof(cfg.wifi_ssid2));
+    strlcpy(cfg.wifi_pass2, WIFI_PASS2, sizeof(cfg.wifi_pass2));
+    strlcpy(cfg.wifi_ssid3, WIFI_SSID3, sizeof(cfg.wifi_ssid3));
+    strlcpy(cfg.wifi_pass3, WIFI_PASS3, sizeof(cfg.wifi_pass3));
     strncpy(cfg.location_name, LOCATION_NAME, sizeof(cfg.location_name) - 1);
     cfg.location_name[sizeof(cfg.location_name) - 1] = '\0';
     strncpy(cfg.location_abbr, LOC1_ABBR, sizeof(cfg.location_abbr) - 1);
@@ -95,6 +99,14 @@ UserConfig storage_load_config() {
     // never blank out a board's real identity.
     if (nvs_ssid.length() > 0) strlcpy(cfg.wifi_ssid, nvs_ssid.c_str(), sizeof(cfg.wifi_ssid));
     if (nvs_pass.length() > 0) strlcpy(cfg.wifi_pass, nvs_pass.c_str(), sizeof(cfg.wifi_pass));
+    // Fallback networks: same rule -- a non-empty saved value always wins
+    // over the (blank) compiled placeholder.
+    {
+        String s2 = _prefs.getString("ssid2", ""), p2 = _prefs.getString("pass2", "");
+        String s3 = _prefs.getString("ssid3", ""), p3 = _prefs.getString("pass3", "");
+        if (s2.length() > 0) { strlcpy(cfg.wifi_ssid2, s2.c_str(), sizeof(cfg.wifi_ssid2)); strlcpy(cfg.wifi_pass2, p2.c_str(), sizeof(cfg.wifi_pass2)); }
+        if (s3.length() > 0) { strlcpy(cfg.wifi_ssid3, s3.c_str(), sizeof(cfg.wifi_ssid3)); strlcpy(cfg.wifi_pass3, p3.c_str(), sizeof(cfg.wifi_pass3)); }
+    }
     if (nvs_loc_name.length() > 0) strlcpy(cfg.location_name, nvs_loc_name.c_str(), sizeof(cfg.location_name));
     if (nvs_loc_abbr.length() > 0) strlcpy(cfg.location_abbr, nvs_loc_abbr.c_str(), sizeof(cfg.location_abbr));
     cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
@@ -201,6 +213,10 @@ void storage_save_config(const UserConfig &cfg) {
 
     _prefs.putString("ssid", cfg.wifi_ssid);
     _prefs.putString("pass", cfg.wifi_pass);
+    _prefs.putString("ssid2", cfg.wifi_ssid2);
+    _prefs.putString("pass2", cfg.wifi_pass2);
+    _prefs.putString("ssid3", cfg.wifi_ssid3);
+    _prefs.putString("pass3", cfg.wifi_pass3);
     _prefs.putString("loc_name", cfg.location_name);
     _prefs.putString("loc_abbr", cfg.location_abbr);
     _prefs.putFloat("lat", cfg.home_lat);

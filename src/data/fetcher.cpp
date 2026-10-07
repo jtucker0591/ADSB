@@ -348,6 +348,48 @@ struct WaitingStreamReader {
     }
 };
 
+// ---- WiFi slot rotation ----
+// Up to three saved networks (g_config.wifi_ssid/2/3, all persisted in NVS).
+// _wifi_slot is the one currently being attempted. wifi_try_next_slot()
+// moves to the next NON-BLANK slot and starts connecting to it. It's used
+// both while waiting for the first connection at boot and after an
+// established connection drops -- before v2.14 the drop case only ever
+// called WiFi.reconnect() (same network forever), and slots 2/3 came from
+// compile-time macros that a shared OTA build leaves blank.
+static int _wifi_slot = 0;
+static uint32_t _net_down_since = 0;
+
+static const char *wifi_slot_ssid(int i) {
+    return i == 0 ? g_config.wifi_ssid : i == 1 ? g_config.wifi_ssid2 : g_config.wifi_ssid3;
+}
+static const char *wifi_slot_pass(int i) {
+    return i == 0 ? g_config.wifi_pass : i == 1 ? g_config.wifi_pass2 : g_config.wifi_pass3;
+}
+
+static void wifi_begin_slot(int i) {
+    _wifi_slot = i;
+    Serial.printf("WiFi trying slot %d: [%s]\n", i + 1, wifi_slot_ssid(i));
+    WiFi.disconnect(true);              // drop the old attempt AND stop auto-reconnect to it
+    vTaskDelay(pdMS_TO_TICKS(300));
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(wifi_slot_ssid(i), wifi_slot_pass(i));
+}
+
+// Returns true if it switched to a different slot (false = only one
+// network is configured, so there is nothing to rotate to).
+static bool wifi_try_next_slot() {
+    for (int step = 1; step <= 3; step++) {
+        int i = (_wifi_slot + step) % 3;
+        if (wifi_slot_ssid(i)[0] != '\0') {
+            if (i == _wifi_slot) break;   // wrapped back to the only configured slot
+            wifi_begin_slot(i);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void fetch_task(void *param) {
     // Wait for WiFi with retry and radio recycle
     Serial.print("Fetcher: waiting for WiFi");
@@ -356,26 +398,11 @@ static void fetch_task(void *param) {
         vTaskDelay(pdMS_TO_TICKS(500));
         Serial.print(".");
         wait_cycles++;
-        // After 20s (40 cycles), recycle radio and retry
+        // After 20s (40 cycles) without a connection, move on to the next
+        // saved network (or just retry the same one if it's the only one).
         if (wait_cycles % 40 == 0) {
-            // Index 0 is THIS board's own persisted network (g_config, from
-            // NVS), not the compiled WIFI_SSID1 -- see the comment in
-            // fetcher_init() below for why that distinction matters.
-            const char* ssids[] = {g_config.wifi_ssid, WIFI_SSID2, WIFI_SSID3};
-            const char* passes[] = {g_config.wifi_pass, WIFI_PASS2, WIFI_PASS3};
-            int net_idx = (wait_cycles / 40) % 3;
-            if (ssids[net_idx][0] == '\0') {
-                // No network configured in this fallback slot -- skip
-                // straight past it instead of calling WiFi.begin() with a
-                // blank SSID (which just logs an error and wastes a cycle).
-            } else {
-                Serial.printf("\nWiFi retry — trying [%s] (attempt %d)\n", ssids[net_idx], wait_cycles / 40 + 1);
-                WiFi.disconnect(false);
-                WiFi.mode(WIFI_OFF);
-                vTaskDelay(pdMS_TO_TICKS(500));
-                WiFi.mode(WIFI_STA);
-                WiFi.begin(ssids[net_idx], passes[net_idx]);
-            }
+            Serial.println();
+            if (!wifi_try_next_slot()) wifi_begin_slot(_wifi_slot);
         }
     }
     update_ip_addr();
@@ -410,6 +437,7 @@ static void fetch_task(void *param) {
 
 while (true) {
         if (network_connected()) {
+            _net_down_since = 0;
             if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
                 char url[128];
                 // Switched off api.airplanes.live (2026-09-21): it quietly
@@ -512,7 +540,15 @@ while (true) {
             }
         } else {
             error_log_add("Network down");
-            WiFi.reconnect();
+            // Give the current network ~20s to come back (auto-reconnect /
+            // router reboot), then rotate to the next saved one.
+            if (_net_down_since == 0) _net_down_since = millis();
+            if (millis() - _net_down_since > 20000UL) {
+                _net_down_since = millis();
+                if (!wifi_try_next_slot()) WiFi.reconnect();
+            } else {
+                WiFi.reconnect();
+            }
         }
 
         ota_check_and_apply_if_due(); // no-op unless the check interval has elapsed
@@ -620,11 +656,9 @@ void fetcher_init(AircraftList *list) {
     // OTA build) compiled default instead -- which is exactly what caused
     // this board to lose WiFi entirely after updating to a placeholder-built
     // release.
-    const char* ssids[] = {g_config.wifi_ssid, WIFI_SSID2, WIFI_SSID3};
-    const char* passes[] = {g_config.wifi_pass, WIFI_PASS2, WIFI_PASS3};
-    Serial.printf("WiFi trying: [%s]\n", ssids[0]);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssids[0], passes[0]);
+    // Start on slot 1; all three slots come from g_config (NVS-backed) --
+    // see wifi_begin_slot / wifi_try_next_slot above.
+    wifi_begin_slot(0);
 
     xTaskCreatePinnedToCore(fetch_task, "adsb_fetch", 32768, nullptr, 1, &_fetch_task_handle, 1);
     xTaskCreatePinnedToCore(route_enrich_task, "route_enrich", 8192, nullptr, 0, &_route_task_handle, 1);
