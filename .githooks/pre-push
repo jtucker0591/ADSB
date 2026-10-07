@@ -33,7 +33,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
     hits=$(git diff "$base_arg" "$local_sha" 2>/dev/null \
         | grep -E '^\+[[:space:]]*#define[[:space:]]+WIFI_(PASS|SSID)[0-9]?[[:space:]]+"[^"]+"' \
-        | grep -vE '"(REDACTED|)"' || true)
+        | grep -vE '"(REDACTED|YourWiFiName|YourWiFiPassword|)"' || true)
     if [ -n "$hits" ]; then
         echo "pre-push BLOCKED: a commit in this push adds what looks like a real WiFi credential:" >&2
         echo "$hits" | sed 's/^/    /' >&2
